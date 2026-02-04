@@ -1,27 +1,38 @@
-from io import BytesIO
 from datetime import datetime
+from io import BytesIO
+
 from reportlab.lib.pagesizes import A4
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
+
 def make_receipt_pdf(receipt_no: int, service: str, amount: int, dt: datetime) -> bytes:
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
+    """
+    Возвращает PDF (bytes). Главное: номер квитанции, дата, время.
+    """
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
     w, h = A4
 
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, h - 60, "КВИТАНЦИЯ")
+    # базовый шрифт
+    c.setFont("Helvetica", 12)
 
-    c.setFont("Helvetica", 11)
-    c.drawString(50, h - 100, f"Номер квитанции: {receipt_no}")
+    # Заголовок
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(50, h - 60, "Квитанция")
+
+    # Номер / дата / время
+    c.setFont("Helvetica", 12)
+    c.drawString(50, h - 100, f"Квитанция №: {receipt_no}")
     c.drawString(50, h - 120, f"Дата: {dt.strftime('%d.%m.%Y')}")
-    c.drawString(250, h - 120, f"Время: {dt.strftime('%H:%M')}")
+    c.drawString(50, h - 140, f"Время: {dt.strftime('%H:%M')}")
 
-    c.line(50, h - 135, w - 50, h - 135)
-
-    c.drawString(50, h - 170, f"Услуга: {service}")
-    c.drawString(50, h - 200, f"Сумма: {amount} руб.")
+    # Услуга и сумма
+    c.drawString(50, h - 180, f"Услуга: {service}")
+    c.drawString(50, h - 200, f"Сумма: {amount} ₽")
 
     c.showPage()
     c.save()
-    buffer.seek(0)
-    return buffer.getvalue()
+    buf.seek(0)
+    return buf.read()
