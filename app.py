@@ -84,6 +84,12 @@ def startup():
 def health():
     return {"status": "ok"}
 
+@app.get("/diag")
+def diag():
+    return {
+        "status": "ok",
+        "bot_token_set": bool(BOT_TOKEN)
+    }
 
 # ✅ ВАЖНО: Telegram теперь шлёт на "/" — значит webhook должен быть тут
 @app.post("/")
