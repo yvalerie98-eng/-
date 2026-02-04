@@ -3,43 +3,26 @@ from reportlab.pdfgen import canvas
 from datetime import datetime
 import os
 
-
-def generate_pdf(service: str, amount: int, receipt_no: int) -> str:
-    """
-    Создаёт PDF квитанцию и возвращает путь к файлу
-    """
-
+def generate_pdf(service: str, amount: int) -> str:
     now = datetime.now()
-    date_str = now.strftime("%d.%m.%Y")
-    time_str = now.strftime("%H:%M")
+    receipt_no = now.strftime("%Y%m%d%H%M%S")
 
-    filename = f"receipt_{receipt_no}_{amount}.pdf"
-    filepath = os.path.join("/tmp", filename)
+    filename = f"receipt_{receipt_no}.pdf"
+    path = os.path.join("/tmp", filename)
 
-    c = canvas.Canvas(filepath, pagesize=A4)
+    c = canvas.Canvas(path, pagesize=A4)
     width, height = A4
 
+    c.setFont("Helvetica", 14)
+    c.drawString(50, height - 50, "Квитанция")
+
     c.setFont("Helvetica", 12)
-
-    y = height - 80
-    c.drawString(50, y, "КВИТАНЦИЯ")
-    y -= 40
-
-    c.drawString(50, y, f"Номер квитанции: {receipt_no}")
-    y -= 25
-
-    c.drawString(50, y, f"Дата: {date_str}")
-    y -= 25
-
-    c.drawString(50, y, f"Время: {time_str}")
-    y -= 40
-
-    c.drawString(50, y, f"Услуга: {service}")
-    y -= 25
-
-    c.drawString(50, y, f"Сумма: {amount} ₽")
+    c.drawString(50, height - 100, f"Дата: {now.strftime('%d.%m.%Y %H:%M')}")
+    c.drawString(50, height - 130, f"Номер квитанции: {receipt_no}")
+    c.drawString(50, height - 170, f"Услуга: {service}")
+    c.drawString(50, height - 200, f"Сумма: {amount} ₽")
 
     c.showPage()
     c.save()
 
-    return filepath
+    return path
