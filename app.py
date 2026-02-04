@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime
 
 import requests
@@ -6,6 +7,8 @@ from fastapi import FastAPI, Request
 
 from db import init_db, take_next_no, set_state, get_state, clear_state
 from pdf import make_receipt_pdf
+
+logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -84,18 +87,25 @@ def startup():
 def health():
     return {"status": "ok"}
 
+
 @app.get("/diag")
 def diag():
+    # покажем, что именно задеплоено + какие роуты реально есть
+    routes = []
+    for r in app.router.routes:
+        methods = sorted(list(getattr(r, "methods", []) or []))
+        path = getattr(r, "path", "")
+        if path:
+            routes.append({"path": path, "methods": methods})
+
     return {
         "status": "ok",
-        "bot_token_set": bool(BOT_TOKEN)
+        "bot_token_set": bool(BOT_TOKEN),
+        "routes": routes,
     }
 
-# ✅ ВАЖНО: Telegram теперь шлёт на "/" — значит webhook должен быть тут
-@app.post("/")
-async def webhook_root(req: Request):
-    update = await req.json()
 
+async def handle_update(update: dict):
     # MESSAGE
     if "message" in update:
         msg = update["message"]
@@ -118,8 +128,8 @@ async def webhook_root(req: Request):
             clear_state(chat_id)
 
             no = take_next_no("other")
-            pdf = make_receipt_pdf(no, service, amount, datetime.now())
-            send_document(chat_id, f"receipt_other_{no}.pdf", pdf)
+            pdf_bytes = make_receipt_pdf(no, service, amount, datetime.now())
+            send_document(chat_id, f"receipt_other_{no}.pdf", pdf_bytes)
             send_message(chat_id, "Готово ✅")
             return {"ok": True}
 
@@ -132,6 +142,7 @@ async def webhook_root(req: Request):
         chat_id = cq["message"]["chat"]["id"]
         data = cq.get("data", "")
 
+        # подтверждаем клик, чтобы не крутилось "часики" в телеге
         try:
             tg("answerCallbackQuery", {"callback_query_id": cq["id"]})
         except Exception:
@@ -147,8 +158,8 @@ async def webhook_root(req: Request):
             if key in AMOUNTS:
                 service_name, amount = AMOUNTS[key]
                 no = take_next_no(key)
-                pdf = make_receipt_pdf(no, service_name, amount, datetime.now())
-                send_document(chat_id, f"receipt_{key}_{no}.pdf", pdf)
+                pdf_bytes = make_receipt_pdf(no, service_name, amount, datetime.now())
+                send_document(chat_id, f"receipt_{key}_{no}.pdf", pdf_bytes)
                 send_message(chat_id, "Готово ✅")
                 return {"ok": True}
 
@@ -156,3 +167,18 @@ async def webhook_root(req: Request):
         return {"ok": True}
 
     return {"ok": True}
+
+
+# ✅ ДВА webhook пути, чтобы больше не ловить 404 от несовпадения
+@app.post("/")
+async def webhook_root(req: Request):
+    update = await req.json()
+    logging.info("WEBHOOK / update keys=%s", list(update.keys()))
+    return await handle_update(update)
+
+
+@app.post("/webhook")
+async def webhook(req: Request):
+    update = await req.json()
+    logging.info("WEBHOOK /webhook update keys=%s", list(update.keys()))
+    return await handle_update(update)
