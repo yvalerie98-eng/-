@@ -3,18 +3,18 @@ import logging
 from datetime import datetime
 
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 
 from db import init_db, take_next_no, set_state, get_state, clear_state
 from pdf import make_receipt_pdf
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN env var is not set")
 
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 AMOUNTS = {
     "39900": ("ПНС", 39900),
@@ -27,7 +27,7 @@ app = FastAPI()
 
 
 def tg(method: str, payload: dict):
-    r = requests.post(f"{BASE_URL}/{method}", json=payload, timeout=20)
+    r = requests.post(f"{TG_API}/{method}", json=payload, timeout=20)
     r.raise_for_status()
     return r.json()
 
@@ -39,15 +39,23 @@ def send_message(chat_id: int, text: str, reply_markup=None):
     tg("sendMessage", payload)
 
 
-def send_document(chat_id: int, filename: str, data: bytes):
-    files = {"document": (filename, data, "application/pdf")}
+def send_pdf(chat_id: int, filename: str, pdf_bytes: bytes):
+    files = {"document": (filename, pdf_bytes, "application/pdf")}
     r = requests.post(
-        f"{BASE_URL}/sendDocument",
-        data={"chat_id": chat_id},
+        f"{TG_API}/sendDocument",
+        data={"chat_id": str(chat_id)},
         files=files,
         timeout=60,
     )
     r.raise_for_status()
+
+
+def answer_callback(callback_query_id: str):
+    try:
+        tg("answerCallbackQuery", {"callback_query_id": callback_query_id})
+    except Exception:
+        # не критично
+        pass
 
 
 def menu():
@@ -63,122 +71,6 @@ def menu():
 
 
 def parse_other(text: str):
+    # формат: услуга; сумма
     parts = [p.strip() for p in text.split(";") if p.strip()]
-    if len(parts) < 2:
-        return None
-
-    service = parts[0]
-    amount_raw = parts[1].replace(" ", "").replace(",", ".")
-
-    try:
-        amount = int(float(amount_raw))
-    except Exception:
-        return None
-
-    return service, amount
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
-
-
-@app.get("/")
-def health():
-    return {"status": "ok"}
-
-
-@app.get("/diag")
-def diag():
-    # покажем, что именно задеплоено + какие роуты реально есть
-    routes = []
-    for r in app.router.routes:
-        methods = sorted(list(getattr(r, "methods", []) or []))
-        path = getattr(r, "path", "")
-        if path:
-            routes.append({"path": path, "methods": methods})
-
-    return {
-        "status": "ok",
-        "bot_token_set": bool(BOT_TOKEN),
-        "routes": routes,
-    }
-
-
-async def handle_update(update: dict):
-    # MESSAGE
-    if "message" in update:
-        msg = update["message"]
-        chat_id = msg["chat"]["id"]
-        text = (msg.get("text") or "").strip()
-
-        if text.startswith("/start") or text.lower() == "старт":
-            clear_state(chat_id)
-            send_message(chat_id, "Какой вариант квитанции нужен?", reply_markup=menu())
-            return {"ok": True}
-
-        st = get_state(chat_id)
-        if st and st.get("step") == "WAIT_OTHER":
-            parsed = parse_other(text)
-            if not parsed:
-                send_message(chat_id, "Формат: Услуга; сумма\nПример: сопровождение; 5000")
-                return {"ok": True}
-
-            service, amount = parsed
-            clear_state(chat_id)
-
-            no = take_next_no("other")
-            pdf_bytes = make_receipt_pdf(no, service, amount, datetime.now())
-            send_document(chat_id, f"receipt_other_{no}.pdf", pdf_bytes)
-            send_message(chat_id, "Готово ✅")
-            return {"ok": True}
-
-        send_message(chat_id, "Напиши /start")
-        return {"ok": True}
-
-    # CALLBACK
-    if "callback_query" in update:
-        cq = update["callback_query"]
-        chat_id = cq["message"]["chat"]["id"]
-        data = cq.get("data", "")
-
-        # подтверждаем клик, чтобы не крутилось "часики" в телеге
-        try:
-            tg("answerCallbackQuery", {"callback_query_id": cq["id"]})
-        except Exception:
-            pass
-
-        if data == "AMOUNT_other":
-            set_state(chat_id, "WAIT_OTHER")
-            send_message(chat_id, "Напиши: Услуга; сумма\nПример: сопровождение; 5000")
-            return {"ok": True}
-
-        if data.startswith("AMOUNT_"):
-            key = data.replace("AMOUNT_", "")
-            if key in AMOUNTS:
-                service_name, amount = AMOUNTS[key]
-                no = take_next_no(key)
-                pdf_bytes = make_receipt_pdf(no, service_name, amount, datetime.now())
-                send_document(chat_id, f"receipt_{key}_{no}.pdf", pdf_bytes)
-                send_message(chat_id, "Готово ✅")
-                return {"ok": True}
-
-        send_message(chat_id, "Не поняла кнопку. Напиши /start.")
-        return {"ok": True}
-
-    return {"ok": True}
-
-
-# ✅ ДВА webhook пути, чтобы больше не ловить 404 от несовпадения
-@app.post("/")
-async def webhook_root(req: Request):
-    update = await req.json()
-    logging.info("WEBHOOK / update keys=%s", list(update.keys()))
-    return await handle_update(update)
-
-
-@app.post("/webhook")
-async def webhook(req: Request):
-    update = await req.json()
-    logging.info("WEBHOOK /webhook update keys=%s", list(update.keys()))
-    return await handle_update(update)
+    if len(parts) < 
